@@ -1,22 +1,15 @@
 /**
- * piano.js
- * --------
- * Canvas-based piano keyboard spanning C4–B5.
- * Handles touch/mouse input and visual states (active, hover, hint).
+ * piano.js — Glossy canvas piano keyboard (C4–B5).
+ * Visual: gradient keys, glow on active/hint, press-inset animation, gloss sheen.
  */
 
 class PianoKeyboard {
-  /**
-   * @param {HTMLCanvasElement} canvas
-   * @param {{ onNoteDown: (note:string)=>void, onNoteUp: (note:string)=>void }} callbacks
-   */
   constructor(canvas, { onNoteDown, onNoteUp }) {
-    this.canvas = canvas;
-    this.ctx    = canvas.getContext('2d');
+    this.canvas     = canvas;
+    this.ctx        = canvas.getContext('2d');
     this.onNoteDown = onNoteDown || (() => {});
     this.onNoteUp   = onNoteUp   || (() => {});
 
-    // Two octaves: C4-B4, C5-B5
     this.WHITE_NOTES = [
       'C4','D4','E4','F4','G4','A4','B4',
       'C5','D5','E5','F5','G5','A5','B5',
@@ -26,252 +19,277 @@ class PianoKeyboard {
       'C#5','D#5', null,'F#5','G#5','A#5', null,
     ];
 
-    this._keys = [];       // computed geometry
-    this._active = new Set();
-    this._hover  = new Set();
-    this._hint   = null;
-
-    // Track pointer ids -> note for multi-touch on piano
-    this._pointerMap = new Map();
+    this._keys      = [];
+    this._active    = new Set();
+    this._hint      = null;
+    this._pointerMap = new Map();  // pointerId/mouse -> note
+    this._grads     = {};          // cached gradients
 
     this._bindEvents();
   }
 
-  // -------------------------------------------------------------------------
-  // Geometry
-  // -------------------------------------------------------------------------
+  // ── Geometry ─────────────────────────────────────────────────────────────
 
-  /** Recompute key layout and redraw. Call when canvas size changes. */
   resize(w, h) {
     this.canvas.width  = w;
     this.canvas.height = h;
     this._buildKeys(w, h);
+    this._buildGradients(w, h);
     this.draw();
   }
 
   _buildKeys(w, h) {
     this._keys = [];
     const nWhite = this.WHITE_NOTES.length; // 14
-    const ww = w / nWhite;
-    const wh = h;
-    const bw = ww * 0.58;
-    const bh = h * 0.60;
+    const ww     = w / nWhite;
+    const bw     = ww * 0.58;
+    const bh     = h * 0.60;
 
-    // White keys
     this.WHITE_NOTES.forEach((note, i) => {
-      this._keys.push({
-        note,
-        isBlack: false,
-        x: i * ww,
-        y: 0,
-        w: ww - 1,   // 1px gap
-        h: wh,
-      });
+      this._keys.push({ note, isBlack: false, x: i * ww, y: 0, w: ww - 1, h });
     });
 
-    // Black key offsets within each octave (index into white keys)
-    // C# is between C(0) and D(1), so offset = 0 + 0.67
     const blackOffsets = [0.67, 1.67, null, 3.67, 4.67, 5.67, null];
-
-    [0, 7].forEach((octaveStart) => {
+    [0, 7].forEach((start) => {
       blackOffsets.forEach((off, i) => {
         if (off === null) return;
-        const note = this.BLACK_NOTES[octaveStart + i];
+        const note = this.BLACK_NOTES[start + i];
         if (!note) return;
-        const x = (octaveStart + off) * ww - bw / 2;
         this._keys.push({
-          note,
-          isBlack: true,
-          x,
-          y: 0,
-          w: bw,
-          h: bh,
+          note, isBlack: true,
+          x: (start + off) * ww - bw / 2,
+          y: 0, w: bw, h: bh,
         });
       });
     });
   }
 
-  // -------------------------------------------------------------------------
-  // Drawing
-  // -------------------------------------------------------------------------
+  _buildGradients(w, h) {
+    const ctx = this.ctx;
+    const g   = this._grads;
+
+    // White key states
+    const wn = ctx.createLinearGradient(0, 0, 0, h);
+    wn.addColorStop(0,   '#fafaf5');
+    wn.addColorStop(0.7, '#f0f0e6');
+    wn.addColorStop(1,   '#ddddd2');
+    g.whiteNormal = wn;
+
+    const wa = ctx.createLinearGradient(0, 0, 0, h);
+    wa.addColorStop(0,   '#b5e4ff');
+    wa.addColorStop(0.4, '#50b4ff');
+    wa.addColorStop(1,   '#2070cc');
+    g.whiteActive = wa;
+
+    const wh = ctx.createLinearGradient(0, 0, 0, h);
+    wh.addColorStop(0,   '#b2f0c8');
+    wh.addColorStop(0.4, '#5de08a');
+    wh.addColorStop(1,   '#1e9040');
+    g.whiteHint = wh;
+
+    // Black key states
+    const bn = ctx.createLinearGradient(0, 0, 0, h * 0.6);
+    bn.addColorStop(0,   '#2e2e2e');
+    bn.addColorStop(0.6, '#181818');
+    bn.addColorStop(1,   '#080808');
+    g.blackNormal = bn;
+
+    const ba = ctx.createLinearGradient(0, 0, 0, h * 0.6);
+    ba.addColorStop(0,   '#5aa8f0');
+    ba.addColorStop(1,   '#1a50a0');
+    g.blackActive = ba;
+
+    const bh2 = ctx.createLinearGradient(0, 0, 0, h * 0.6);
+    bh2.addColorStop(0, '#3ec868');
+    bh2.addColorStop(1, '#166030');
+    g.blackHint = bh2;
+  }
+
+  // ── Drawing ───────────────────────────────────────────────────────────────
 
   draw() {
-    const ctx  = this.ctx;
-    const w    = this.canvas.width;
-    const h    = this.canvas.height;
+    const ctx = this.ctx;
+    const w   = this.canvas.width;
+    const h   = this.canvas.height;
 
     ctx.clearRect(0, 0, w, h);
 
-    // Draw white keys first
+    // Background
+    const bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, '#111120');
+    bg.addColorStop(1, '#070712');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // White keys first, then black on top
     this._keys.filter(k => !k.isBlack).forEach(k => this._drawKey(k));
-    // Then black keys on top
     this._keys.filter(k =>  k.isBlack).forEach(k => this._drawKey(k));
+
+    // Subtle octave divider (gold dashed)
+    const midX = w / 2;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(200,165,60,0.3)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(midX, 0);
+    ctx.lineTo(midX, h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
   }
 
   _drawKey(k) {
-    const ctx = this.ctx;
+    const ctx      = this.ctx;
     const isActive = this._active.has(k.note);
     const isHint   = this._hint === k.note;
 
+    // Vertical press offset when active
+    const pressY = isActive ? 3 : 0;
+    const r      = k.isBlack ? 3 : 5;
+
+    // Choose gradient fill
     let fill;
     if (k.isBlack) {
-      if (isActive)     fill = '#2882dc';
-      else if (isHint)  fill = '#1ea040';
-      else              fill = '#1e1e1e';
+      fill = isActive ? this._grads.blackActive : (isHint ? this._grads.blackHint : this._grads.blackNormal);
     } else {
-      if (isActive)     fill = '#50b4ff';
-      else if (isHint)  fill = '#5de08a';
-      else              fill = '#f5f5eb';
+      fill = isActive ? this._grads.whiteActive : (isHint ? this._grads.whiteHint : this._grads.whiteNormal);
     }
 
-    // Key body
-    ctx.fillStyle = fill;
+    // Glow for active / hint
+    ctx.save();
+    if (isActive) {
+      ctx.shadowBlur  = k.isBlack ? 18 : 26;
+      ctx.shadowColor = '#50b4ff';
+    } else if (isHint) {
+      ctx.shadowBlur  = k.isBlack ? 18 : 26;
+      ctx.shadowColor = '#5de08a';
+    }
+
+    // Key shape (rounded bottom)
+    const x = k.x + 0.5;
+    const y = k.y + pressY + 0.5;
+    const kw = k.w - 1;
+    const kh = k.h - pressY - 1;
+
     ctx.beginPath();
-    if (!k.isBlack) {
-      // Rounded bottom corners for white keys
-      const r = 5;
-      ctx.moveTo(k.x, k.y);
-      ctx.lineTo(k.x + k.w, k.y);
-      ctx.lineTo(k.x + k.w, k.y + k.h - r);
-      ctx.quadraticCurveTo(k.x + k.w, k.y + k.h, k.x + k.w - r, k.y + k.h);
-      ctx.lineTo(k.x + r, k.y + k.h);
-      ctx.quadraticCurveTo(k.x, k.y + k.h, k.x, k.y + k.h - r);
-      ctx.closePath();
-    } else {
-      const r = 3;
-      ctx.moveTo(k.x, k.y);
-      ctx.lineTo(k.x + k.w, k.y);
-      ctx.lineTo(k.x + k.w, k.y + k.h - r);
-      ctx.quadraticCurveTo(k.x + k.w, k.y + k.h, k.x + k.w - r, k.y + k.h);
-      ctx.lineTo(k.x + r, k.y + k.h);
-      ctx.quadraticCurveTo(k.x, k.y + k.h, k.x, k.y + k.h - r);
-      ctx.closePath();
-    }
-    ctx.fill();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + kw, y);
+    ctx.lineTo(x + kw, y + kh - r);
+    ctx.quadraticCurveTo(x + kw, y + kh, x + kw - r, y + kh);
+    ctx.lineTo(x + r,  y + kh);
+    ctx.quadraticCurveTo(x, y + kh, x, y + kh - r);
+    ctx.closePath();
 
-    // Border
-    ctx.strokeStyle = k.isBlack ? '#000' : '#999';
-    ctx.lineWidth = k.isBlack ? 1 : 1;
+    ctx.fillStyle   = fill;
+    ctx.fill();
+    ctx.strokeStyle = k.isBlack ? 'rgba(0,0,0,0.9)' : 'rgba(160,160,148,0.55)';
+    ctx.lineWidth   = 1;
     ctx.stroke();
+    ctx.restore();
+
+    // Gloss sheen — white keys
+    if (!k.isBlack) {
+      const sheen = ctx.createLinearGradient(k.x, pressY, k.x, k.h * 0.32);
+      sheen.addColorStop(0, 'rgba(255,255,255,0.38)');
+      sheen.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = sheen;
+      ctx.fillRect(k.x + 1, pressY, k.w - 3, k.h * 0.32);
+    }
+
+    // Gloss sheen — black keys (left-edge highlight)
+    if (k.isBlack && !isActive && !isHint) {
+      const sheen = ctx.createLinearGradient(k.x, 0, k.x + k.w, 0);
+      sheen.addColorStop(0,    'rgba(255,255,255,0.14)');
+      sheen.addColorStop(0.35, 'rgba(255,255,255,0.04)');
+      sheen.addColorStop(1,    'rgba(0,0,0,0)');
+      ctx.fillStyle = sheen;
+      ctx.fillRect(k.x + 1, 1, k.w - 2, k.h * 0.58);
+    }
 
     // Note label on white keys
     if (!k.isBlack) {
-      ctx.fillStyle = isActive ? '#003' : '#888';
-      ctx.font = `bold ${Math.min(11, k.w * 0.45)}px sans-serif`;
-      ctx.textAlign = 'center';
+      ctx.fillStyle    = isActive ? 'rgba(0,50,140,0.85)' : 'rgba(110,110,110,0.65)';
+      const fs         = Math.min(11, k.w * 0.42);
+      ctx.font         = `600 ${fs}px Poppins, sans-serif`;
+      ctx.textAlign    = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(k.note, k.x + k.w / 2, k.y + k.h - 4);
+      ctx.fillText(k.note, k.x + k.w / 2, k.y + k.h - 5);
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Hit testing
-  // -------------------------------------------------------------------------
+  // ── Hit testing ───────────────────────────────────────────────────────────
 
-  /**
-   * Returns the note at canvas coordinates (px, py), or null.
-   * Black keys take priority (drawn on top).
-   */
   noteAt(px, py) {
-    // Check black keys first
     for (const k of this._keys) {
       if (!k.isBlack) continue;
-      if (px >= k.x && px <= k.x + k.w && py >= k.y && py <= k.y + k.h) {
-        return k.note;
-      }
+      if (px >= k.x && px <= k.x + k.w && py >= k.y && py <= k.y + k.h) return k.note;
     }
-    // Then white keys
     for (const k of this._keys) {
       if (k.isBlack) continue;
-      if (px >= k.x && px <= k.x + k.w && py >= k.y && py <= k.y + k.h) {
-        return k.note;
-      }
+      if (px >= k.x && px <= k.x + k.w && py >= k.y && py <= k.y + k.h) return k.note;
     }
     return null;
   }
 
-  // -------------------------------------------------------------------------
-  // Visual state setters
-  // -------------------------------------------------------------------------
-
-  setActive(noteSet) {
-    this._active = new Set(noteSet);
-    this.draw();
+  /** Fractional x center (0–1) for a note, used by floating label spawner. */
+  getKeyFractionX(note) {
+    const k = this._keys.find(k => k.note === note);
+    if (!k || !this.canvas.width) return 0.5;
+    return (k.x + k.w / 2) / this.canvas.width;
   }
 
-  setHover(noteSet) {
-    this._hover = new Set(noteSet);
-    this.draw();
-  }
+  // ── State setters ─────────────────────────────────────────────────────────
 
-  setHint(note) {
-    this._hint = note || null;
-    this.draw();
-  }
+  setActive(noteSet) { this._active = new Set(noteSet); this.draw(); }
+  setHint(note)      { this._hint   = note || null;     this.draw(); }
 
-  // -------------------------------------------------------------------------
-  // Input events
-  // -------------------------------------------------------------------------
+  // ── Events ────────────────────────────────────────────────────────────────
 
   _bindEvents() {
-    const canvas = this.canvas;
+    const cv = this.canvas;
 
-    // Mouse events
-    canvas.addEventListener('mousedown', (e) => {
+    cv.addEventListener('mousedown', (e) => {
       e.preventDefault();
       const { x, y } = this._canvasXY(e);
       const note = this.noteAt(x, y);
-      if (note) {
-        this._pointerMap.set('mouse', note);
-        this.onNoteDown(note);
-      }
+      if (note) { this._pointerMap.set('mouse', note); this.onNoteDown(note); }
     });
 
-    canvas.addEventListener('mousemove', (e) => {
+    cv.addEventListener('mousemove', (e) => {
+      if (!(e.buttons & 1)) return;
       const { x, y } = this._canvasXY(e);
       const note = this.noteAt(x, y);
-      this._hover = note ? new Set([note]) : new Set();
-      // If mouse is held, slide notes
-      if (e.buttons & 1) {
-        const prev = this._pointerMap.get('mouse');
-        if (prev !== note) {
-          if (prev) this.onNoteUp(prev);
-          if (note) this.onNoteDown(note);
-          this._pointerMap.set('mouse', note || undefined);
-        }
+      const prev = this._pointerMap.get('mouse');
+      if (prev !== note) {
+        if (prev) this.onNoteUp(prev);
+        if (note) { this._pointerMap.set('mouse', note); this.onNoteDown(note); }
+        else this._pointerMap.delete('mouse');
       }
-      this.draw();
     });
 
-    canvas.addEventListener('mouseup', (e) => {
-      e.preventDefault();
+    cv.addEventListener('mouseup', (e) => {
       const prev = this._pointerMap.get('mouse');
       if (prev) this.onNoteUp(prev);
       this._pointerMap.delete('mouse');
     });
 
-    canvas.addEventListener('mouseleave', () => {
+    cv.addEventListener('mouseleave', () => {
       const prev = this._pointerMap.get('mouse');
       if (prev) this.onNoteUp(prev);
       this._pointerMap.delete('mouse');
-      this._hover = new Set();
-      this.draw();
     });
 
-    // Touch events
-    canvas.addEventListener('touchstart', (e) => {
+    cv.addEventListener('touchstart', (e) => {
       e.preventDefault();
       for (const t of e.changedTouches) {
         const { x, y } = this._touchXY(t);
         const note = this.noteAt(x, y);
-        if (note) {
-          this._pointerMap.set(t.identifier, note);
-          this.onNoteDown(note);
-        }
+        if (note) { this._pointerMap.set(t.identifier, note); this.onNoteDown(note); }
       }
     }, { passive: false });
 
-    canvas.addEventListener('touchmove', (e) => {
+    cv.addEventListener('touchmove', (e) => {
       e.preventDefault();
       for (const t of e.changedTouches) {
         const { x, y } = this._touchXY(t);
@@ -279,17 +297,13 @@ class PianoKeyboard {
         const prev = this._pointerMap.get(t.identifier);
         if (prev !== note) {
           if (prev) this.onNoteUp(prev);
-          if (note) {
-            this._pointerMap.set(t.identifier, note);
-            this.onNoteDown(note);
-          } else {
-            this._pointerMap.delete(t.identifier);
-          }
+          if (note) { this._pointerMap.set(t.identifier, note); this.onNoteDown(note); }
+          else this._pointerMap.delete(t.identifier);
         }
       }
     }, { passive: false });
 
-    canvas.addEventListener('touchend', (e) => {
+    cv.addEventListener('touchend', (e) => {
       e.preventDefault();
       for (const t of e.changedTouches) {
         const prev = this._pointerMap.get(t.identifier);
@@ -298,7 +312,7 @@ class PianoKeyboard {
       }
     }, { passive: false });
 
-    canvas.addEventListener('touchcancel', (e) => {
+    cv.addEventListener('touchcancel', (e) => {
       for (const t of e.changedTouches) {
         const prev = this._pointerMap.get(t.identifier);
         if (prev) this.onNoteUp(prev);
@@ -308,22 +322,16 @@ class PianoKeyboard {
   }
 
   _canvasXY(e) {
-    const rect = this.canvas.getBoundingClientRect();
-    const scaleX = this.canvas.width  / rect.width;
-    const scaleY = this.canvas.height / rect.height;
-    return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top)  * scaleY,
-    };
+    const r  = this.canvas.getBoundingClientRect();
+    const sx = this.canvas.width  / r.width;
+    const sy = this.canvas.height / r.height;
+    return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy };
   }
 
-  _touchXY(touch) {
-    const rect = this.canvas.getBoundingClientRect();
-    const scaleX = this.canvas.width  / rect.width;
-    const scaleY = this.canvas.height / rect.height;
-    return {
-      x: (touch.clientX - rect.left) * scaleX,
-      y: (touch.clientY - rect.top)  * scaleY,
-    };
+  _touchXY(t) {
+    const r  = this.canvas.getBoundingClientRect();
+    const sx = this.canvas.width  / r.width;
+    const sy = this.canvas.height / r.height;
+    return { x: (t.clientX - r.left) * sx, y: (t.clientY - r.top) * sy };
   }
 }
