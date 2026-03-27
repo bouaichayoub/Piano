@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Piano Finger Tracker</title>
+  <style>
+    /* ------------------------------------------------------------------ */
+    /* Reset & Base                                                         */
+    /* ------------------------------------------------------------------ */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100dvh;
+      overflow: hidden;
+      background: #0f0f14;
+      color: #e8e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Layout                                                              */
+    /* ------------------------------------------------------------------ */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      width: 100%;
+    }
+
+    /* Top bar */
+    #top-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: #1a1a24;
+      border-bottom: 1px solid #2a2a38;
+      flex-shrink: 0;
+      height: 48px;
+    }
+
+    #top-bar button {
+      touch-action: manipulation;
+      background: #2a2a38;
+      color: #c0c0d0;
+      border: 1px solid #3a3a50;
+      border-radius: 6px;
+      padding: 5px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      transition: background 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    #top-bar button:active,
+    #top-bar button.active {
+      background: #2255cc;
+      color: #fff;
+      border-color: #4488ff;
+    }
+
+    #song-select {
+      flex: 1;
+      min-width: 0;
+      background: #1e1e2e;
+      color: #d0d0e8;
+      border: 1px solid #3a3a50;
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-size: 13px;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    #fps {
+      font-size: 12px;
+      color: #5a5a80;
+      flex-shrink: 0;
+      min-width: 48px;
+      text-align: right;
+    }
+
+    /* Camera section */
+    #camera-section {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+      background: #080810;
+    }
+
+    #video {
+      display: none;
+    }
+
+    #camera-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #no-camera-msg {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: #606080;
+      font-size: 14px;
+      text-align: center;
+      padding: 20px;
+    }
+    #no-camera-msg .icon {
+      font-size: 48px;
+      opacity: 0.4;
+    }
+    #no-camera-msg strong {
+      color: #9090b0;
+      font-size: 16px;
+    }
+
+    /* Learn bar */
+    #learn-bar {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 5px 12px;
+      background: #131320;
+      border-top: 1px solid #2a2a3a;
+      border-bottom: 1px solid #2a2a3a;
+      flex-shrink: 0;
+      height: 36px;
+    }
+    #song-title {
+      font-size: 12px;
+      color: #7878a0;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #next-note {
+      font-size: 13px;
+      font-weight: 700;
+      color: #5de08a;
+      flex-shrink: 0;
+    }
+    #progress {
+      font-size: 12px;
+      color: #5a5a80;
+      flex-shrink: 0;
+    }
+
+    /* Piano section */
+    #piano-section {
+      flex-shrink: 0;
+      height: 180px;
+      background: #0a0a12;
+      border-top: 2px solid #2a2a40;
+      position: relative;
+    }
+
+    #piano-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
+    /* Responsive piano height */
+    @media (max-height: 700px) {
+      #piano-section {
+        height: 150px;
+      }
+    }
+    @media (max-height: 550px) {
+      #piano-section {
+        height: 120px;
+      }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Scrollbar hide                                                       */
+    /* ------------------------------------------------------------------ */
+    ::-webkit-scrollbar { display: none; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Top bar -->
+  <div id="top-bar">
+    <button id="mode-btn" title="Toggle mode (M)">PLAY</button>
+    <select id="song-select" title="Select song"></select>
+    <span id="fps">-- fps</span>
+  </div>
+
+  <!-- Camera section -->
+  <div id="camera-section">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="camera-canvas"></canvas>
+    <div id="no-camera-msg">
+      <div class="icon">📷</div>
+      <strong>Camera not available</strong>
+      <p>Allow camera access and reload, or use the piano below with touch/mouse.</p>
+    </div>
+  </div>
+
+  <!-- Learn bar (LEARN mode only) -->
+  <div id="learn-bar">
+    <span id="song-title"></span>
+    <span id="next-note"></span>
+    <span id="progress"></span>
+  </div>
+
+  <!-- Piano section -->
+  <div id="piano-section">
+    <canvas id="piano-canvas"></canvas>
+  </div>
+
+</div>
+
+<!-- MediaPipe CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+<!-- App scripts -->
+<script src="js/songs.js"></script>
+<script src="js/sound.js"></script>
+<script src="js/piano.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
