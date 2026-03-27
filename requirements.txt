@@ -1,4 +1,7 @@
-mediapipe>=0.10.0
-opencv-python>=4.8.0
-pygame>=2.5.0
-numpy>=1.24.0
+# Piano Learning App – Python dependencies
+# Install with:  pip install -r requirements.txt
+
+mediapipe>=0.10.0       # hand landmark detection (MediaPipe Hands)
+opencv-python>=4.8.0    # webcam capture and image conversion
+pygame>=2.5.0           # window, event loop, audio mixer
+numpy>=1.24.0           # synthetic sound generation (sine waves + ADSR)
