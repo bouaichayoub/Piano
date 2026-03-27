@@ -10,10 +10,12 @@ Split-screen layout:
 
 Controls
 --------
-  M          : toggle PLAY / LEARN mode
-  1 / 2 / 3 / 4 : select song in LEARN mode
-  R          : restart current song
-  Q / Esc    : quit
+  M              : toggle PLAY / LEARN mode
+  1 / 2 / 3 / 4 : select song in LEARN mode (keys 1–4)
+  Up / Down      : cycle through songs in LEARN mode
+  R              : restart current song
+  Q / Esc        : quit
+  Mouse click    : click directly on a piano key to play it
 """
 
 from __future__ import annotations
@@ -45,6 +47,9 @@ FPS_TARGET  = 30
 # (relative to the piano surface origin, so 0 means exactly touching the top)
 TRIGGER_MARGIN = 20
 
+# Visual indicator: draw a "touch zone" line at the bottom of the camera feed
+SHOW_TOUCH_ZONE = True
+
 # ---------------------------------------------------------------------------
 # Colour helpers
 # ---------------------------------------------------------------------------
@@ -58,14 +63,16 @@ CLR_OVERLAY   = ( 0,   0,   0, 160)   # semi-transparent black
 FONT_LARGE  = None
 FONT_MEDIUM = None
 FONT_SMALL  = None
+FONT_TINY   = None
 
 
 def init_fonts() -> None:
-    global FONT_LARGE, FONT_MEDIUM, FONT_SMALL
+    global FONT_LARGE, FONT_MEDIUM, FONT_SMALL, FONT_TINY
     pygame.font.init()
     FONT_LARGE  = pygame.font.SysFont("dejavusans", 36, bold=True)
     FONT_MEDIUM = pygame.font.SysFont("dejavusans", 24)
     FONT_SMALL  = pygame.font.SysFont("dejavusans", 18)
+    FONT_TINY   = pygame.font.SysFont("dejavusans", 14)
 
 
 # ---------------------------------------------------------------------------
@@ -192,12 +199,13 @@ def draw_hud(surface: pygame.Surface, state: AppState, num_hands: int) -> None:
             draw_text(surface, next_lbl, FONT_MEDIUM, CLR_GREEN,
                       (WIN_W - nl_w - 10, bar_y + 6))
 
-    # Bottom hint strip
-    hint_y = WIN_H - 20
-    controls = "M: toggle mode   1-4: select song   R: restart   Q/Esc: quit"
-    cw = FONT_SMALL.size(controls)[0]
-    draw_text(surface, controls, FONT_SMALL, (120, 120, 120),
-              ((WIN_W - cw) // 2, hint_y))
+    # Bottom hint strip (drawn at the very bottom of the piano area)
+    hint_y   = WIN_H - 18
+    controls = "M: mode   1-4/Up-Down: song   R: restart   Mouse: click key   Q/Esc: quit"
+    font_use = FONT_TINY if FONT_TINY else FONT_SMALL
+    cw       = font_use.size(controls)[0]
+    draw_text(surface, controls, font_use, (110, 110, 130),
+              ((WIN_W - cw) // 2, hint_y), shadow=False)
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +264,19 @@ def main() -> None:
                     state.select_song(2)
                 elif event.key == pygame.K_4:
                     state.select_song(3)
+                elif event.key == pygame.K_UP:
+                    state.select_song(state.song_index - 1)
+                elif event.key == pygame.K_DOWN:
+                    state.select_song(state.song_index + 1)
+
+            # Mouse click on the piano keyboard area
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                if my >= piano_y:
+                    piano_local_y = my - piano_y
+                    note = piano.note_at(mx, piano_local_y)
+                    if note:
+                        state.on_note_pressed(note, engine)
 
         # ----------------------------------------------------------------
         # Camera frame
@@ -340,6 +361,31 @@ def main() -> None:
 
         # Piano keyboard
         piano.draw(screen, offset_y=piano_y)
+
+        # Touch-zone indicator: a subtle dashed line near the bottom of the camera feed
+        if SHOW_TOUCH_ZONE:
+            touch_y = piano_y - TRIGGER_MARGIN
+            dash_w, gap_w = 12, 6
+            x = 0
+            while x < WIN_W:
+                pygame.draw.line(screen, (80, 120, 200),
+                                 (x, touch_y), (min(x + dash_w, WIN_W), touch_y), 1)
+                x += dash_w + gap_w
+            if FONT_TINY:
+                lbl = FONT_TINY.render("touch zone", True, (80, 120, 200))
+                screen.blit(lbl, (WIN_W - lbl.get_width() - 6, touch_y - lbl.get_height() - 2))
+
+        # Active-note display overlay at bottom of camera area
+        if current_pressed and FONT_SMALL:
+            note_str = "  ".join(sorted(current_pressed))
+            note_surf = FONT_SMALL.render(f"Playing: {note_str}", True, (255, 210, 80))
+            bg_surf   = pygame.Surface((note_surf.get_width() + 16, note_surf.get_height() + 6),
+                                       pygame.SRCALPHA)
+            bg_surf.fill((0, 0, 0, 160))
+            nx = (WIN_W - note_surf.get_width() - 16) // 2
+            ny = piano_y - note_surf.get_height() - 10
+            screen.blit(bg_surf, (nx, ny))
+            screen.blit(note_surf, (nx + 8, ny + 3))
 
         # HUD
         draw_hud(screen, state, len(hand_results))
